@@ -10,6 +10,7 @@ use matze\pathfinder\setting\Settings;
 use matze\pathfinder\world\FictionalWorld;
 use pocketmine\math\Vector3;
 use SplMinHeap;
+use matze\pathfinder\exception\PathFinderTimeoutException;
 
 class DStarLite{
 	private array $graph = [];
@@ -20,6 +21,8 @@ class DStarLite{
 	private SplMinHeap $queue;
 	/** @var float[] */
 	private array $km = [0.0];
+
+	private float $actualTimeout = 0.0;
 
 	public function __construct(
 		protected FictionalWorld $world,
@@ -51,6 +54,7 @@ class DStarLite{
 	}
 
 	private function updateVertex(Node $u, Node $start, Node $goal) : void{
+		$this->checkTimeout();
 		// Ensure the node is initialized in g and rhs arrays
 		if(!isset($this->g[$u->getHash()])){
 			$this->g[$u->getHash()] = PHP_INT_MAX;
@@ -86,6 +90,7 @@ class DStarLite{
 	}
 
 	private function calculateRHS(Node $u) : float{
+		$this->checkTimeout();
 		$minCost = PHP_INT_MAX;
 		foreach($this->getNeighbors($u) as $neighbor){
 			// Ensure the neighbor is initialized in g array
@@ -112,6 +117,7 @@ class DStarLite{
 	}
 
 	private function getNeighbors(Node $node) : array{
+		$this->checkTimeout();
 		$neighbors = [];
 		$directions = [
 			new Vector3(1, 0, 0), new Vector3(-1, 0, 0), // East, West
@@ -158,6 +164,7 @@ class DStarLite{
 	}
 
 	private function computeShortestPath(Node $start, Node $goal) : void{
+		$this->checkTimeout();
 		while(!$this->queue->isEmpty() && ($this->queue->top()[0] < $this->calculateKey($start, $start) || $this->rhs[$start->getHash()] !== $this->g[$start->getHash()])){
 			$u = $this->queue->extract()[1];
 
@@ -185,60 +192,71 @@ class DStarLite{
 	}
 
 	public function findPath(Vector3 $startVector, Vector3 $targetVector) : ?PathResult{
-		$startNode = Node::fromVector3($startVector);
-		$goalNode = Node::fromVector3($targetVector);
+		$this->actualTimeout = microtime(true) + $this->timeout;
+		try{
+			$startNode = Node::fromVector3($startVector);
+			$goalNode = Node::fromVector3($targetVector);
 
-		// Reset state for a new pathfinding request
-		$this->graph = [];
-		$this->rhs = [];
-		$this->g = [];
-		$this->queue = new SplMinHeap();
-		$this->km = [0.0];
+			// Reset state for a new pathfinding request
+			$this->graph = [];
+			$this->rhs = [];
+			$this->g = [];
+			$this->queue = new SplMinHeap();
+			$this->km = [0.0];
 
-		// Initialize the algorithm
-		$this->g[$goalNode->getHash()] = PHP_INT_MAX;
-		$this->rhs[$goalNode->getHash()] = 0;
-		$this->queue->insert([$this->calculateKey($goalNode, $startNode), $goalNode]);
+			// Initialize the algorithm
+			$this->g[$goalNode->getHash()] = PHP_INT_MAX;
+			$this->rhs[$goalNode->getHash()] = 0;
+			$this->queue->insert([$this->calculateKey($goalNode, $startNode), $goalNode]);
 
-		// Initialize the start node
-		$this->g[$startNode->getHash()] = PHP_INT_MAX;
-		$this->rhs[$startNode->getHash()] = $this->calculateRHS($startNode);
-		$this->queue->insert([$this->calculateKey($startNode, $startNode), $startNode]);
+			// Initialize the start node
+			$this->g[$startNode->getHash()] = PHP_INT_MAX;
+			$this->rhs[$startNode->getHash()] = $this->calculateRHS($startNode);
+			$this->queue->insert([$this->calculateKey($startNode, $startNode), $startNode]);
 
-		// Compute the shortest path
-		$this->computeShortestPath($startNode, $goalNode);
+			// Compute the shortest path
+			$this->computeShortestPath($startNode, $goalNode);
 
-		// Check if a path was found
-		if($this->g[$startNode->getHash()] === PHP_INT_MAX){
-			return null; // No path found
-		}
-
-		// Reconstruct the path
-		$pathResult = new PathResult();
-		$current = $startNode;
-		while($current->getHash() !== $goalNode->getHash()){
-			$pathResult->addNode($current);
-			$minCost = PHP_INT_MAX;
-			$nextNode = null;
-			foreach($this->getNeighbors($current) as $neighbor){
-				// Ensure the neighbor is initialized in g array
-				if(!isset($this->g[$neighbor->getHash()])){
-					$this->g[$neighbor->getHash()] = PHP_INT_MAX;
-				}
-
-				$cost = $this->g[$neighbor->getHash()];
-				if($cost < $minCost){
-					$minCost = $cost;
-					$nextNode = $neighbor;
-				}
-			}
-			if($nextNode === null){
+			// Check if a path was found
+			if($this->g[$startNode->getHash()] === PHP_INT_MAX){
 				return null; // No path found
 			}
-			$current = $nextNode;
+
+			// Reconstruct the path
+			$pathResult = new PathResult();
+			$current = $startNode;
+			while($current->getHash() !== $goalNode->getHash()){
+				$pathResult->addNode($current);
+				$minCost = PHP_INT_MAX;
+				$nextNode = null;
+				foreach($this->getNeighbors($current) as $neighbor){
+					// Ensure the neighbor is initialized in g array
+					if(!isset($this->g[$neighbor->getHash()])){
+						$this->g[$neighbor->getHash()] = PHP_INT_MAX;
+					}
+
+					$cost = $this->g[$neighbor->getHash()];
+					if($cost < $minCost){
+						$minCost = $cost;
+						$nextNode = $neighbor;
+					}
+				}
+				if($nextNode === null){
+					return null; // No path found
+				}
+				$current = $nextNode;
+			}
+			$pathResult->addNode($goalNode);
+			return $pathResult;
+		}catch(PathFinderTimeoutException){
+			return null;
 		}
-		$pathResult->addNode($goalNode);
-		return $pathResult;
+	}
+
+	public function checkTimeout() : void{
+		if($this->actualTimeout < microtime(true)){
+			throw new PathFinderTimeoutException();
+		}
 	}
 
 	public function isNicePositionToWalk(Vector3 $current, Vector3 $target, int &$cost) : bool{

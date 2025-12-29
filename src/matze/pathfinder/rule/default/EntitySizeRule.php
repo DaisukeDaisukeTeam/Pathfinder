@@ -29,7 +29,6 @@ class EntitySizeRule extends Rule{
 
 	public function couldWalkTo(Vector3 $currentNode, Vector3 $targetNode, FictionalWorld $world, Settings $settings, int &$cost) : bool{
 		if($this->couldStandAt($targetNode, $world, $cost)){
-			error_log("EntitySizeRule: Valid position at " . $targetNode->__toString());
 			return true;
 		}
 
@@ -37,12 +36,10 @@ class EntitySizeRule extends Rule{
 		for($yy = 0; $yy <= $settings->getMaxTravelDistanceDown(); $yy++){
 			$down = $targetNode->down($yy);
 			if(!$this->isAreaClear($down, $world)){
-				error_log("EntitySizeRule: Area not clear at " . $down->__toString());
 				break;
 			}
 			if($this->couldStandAt($down, $world, $cost)){
 				$targetNode->y -= $yy;
-				error_log("EntitySizeRule: Adjusted position to " . $targetNode->__toString());
 				return true;
 			}
 		}
@@ -50,17 +47,14 @@ class EntitySizeRule extends Rule{
 		// Try moving up
 		for($yy = 1; $yy <= $settings->getMaxTravelDistanceUp(); $yy++){
 			if(!$this->isAreaClear($currentNode->up($yy), $world)){
-				error_log("EntitySizeRule: Area not clear at " . $currentNode->up($yy)->__toString());
 				break;
 			}
 			if($this->couldStandAt($targetNode->up($yy), $world, $cost)){
 				$targetNode->y += $yy;
-				error_log("EntitySizeRule: Adjusted position to " . $targetNode->__toString());
 				return true;
 			}
 		}
 
-		error_log("EntitySizeRule: No valid position found for " . $targetNode->__toString());
 		return false;
 	}
 
